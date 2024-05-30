@@ -22,9 +22,20 @@
 #define GARAGE_DOOR_CLOSED  0
 #define GARAGE_DOOR_OPEN    90
 
+
+// uncomment if your MQTT server requires SSL connection
+/**
+#define MQTT_CONNECTION_REQUIRES_SSL
+*/
+
 // definitions of MQTT username and password
 // if undefined, anonymous connection will be attempted
 /**
 #define MQTT_USERNAME       ""
 #define MQTT_PASSWORD       ""
+*/
+
+// the point to which the motor is set to as soon as soon as the board is started
+/*
+#define STARTPOINT          GARAGE_DOOR_CLOSED
 */

@@ -19,9 +19,14 @@
 char ssid[] = SECRET_SSID;    // your network SSID (name)
 char pass[] = SECRET_PASS;    // your network password (use for WPA, or use as key for WEP)
 
+// 15ms required for the motor to get through the iteration
+#define ITERATION_MOVEMENT_DELAY    15
 
-
+#ifdef MQTT_CONNECTION_REQUIRES_SSL
+WiFiSSLClient wifiClient;
+#else
 WiFiClient wifiClient;
+#endif
 MqttClient mqttClient(wifiClient);
 
 const char broker[] = BROKER_ADDRESS;
@@ -65,6 +70,7 @@ struct
 }
 motor_state;
 
+int lastServerReport = millis();
 
 
 
@@ -74,6 +80,11 @@ void setup() {
     while (!Serial) {
         ; // wait for serial port to connect. Needed for native USB port only
     }
+
+    // init the "PROBLEM" LED
+    pinMode(LED_BUILTIN, OUTPUT);
+    // set to "on" straight away to see that the connection was not established
+    digitalWrite(LED_BUILTIN, HIGH);
 
     // attempt to connect to WiFi network:
     Serial.print("Attempting to connect to WPA SSID: ");
@@ -116,12 +127,37 @@ void setup() {
 
     // set up the servo and the button
     main_servo.attach(SERVO_PIN);           // attaches the servo on pin 9 to the servo object
-    main_servo.write(GARAGE_DOOR_CLOSED);   // start with 0 degrees
+    #ifdef STARTPOINT
+    main_servo.write(STARTPOINT);           // start with 0 degrees
+    #endif
     // init button
     pinMode(BUTTON_PIN, INPUT_PULLUP);
+    digitalWrite(LED_BUILTIN, LOW);
 }
 
 void loop() {
+    static int previousTime = millis();
+    int currentTime = millis();
+
+    // if the server's disconnected, turn the light on to indicate the problem
+    if (!wifiClient.connected()) {
+        digitalWrite(LED_BUILTIN, HIGH);
+        return;
+    }
+
+    if(currentTime - lastServerReport > 10000)
+    {
+        digitalWrite(LED_BUILTIN, HIGH);
+        return;
+    }
+    digitalWrite(LED_BUILTIN, LOW);
+
+    // every 10 seconds report state
+    if(currentTime - previousTime > 500)
+    {
+        previousTime = currentTime;
+        sendMqttMessage(get_current_state());
+    }
     // poll messages always
     mqttClient.poll();
 
@@ -183,11 +219,10 @@ void loop() {
         }
 
         main_servo.write(local_target);
-        delay(45);
+        delay(ITERATION_MOVEMENT_DELAY);
 
 
     }
-
 }
 
 String get_current_state()
@@ -257,7 +292,19 @@ void onMqttMessage(int messageSize) {
         Serial.print(*i);
         Serial.println();
     }
-    // from this point, the handlers of commands will return if there is nothing for them to do0
+
+    // from this point, the handlers of commands will return if there is nothing for them to do
+
+    // the server should let know that it is up at least once in 10 seconds
+    if(tokens[0] == "server")
+    {
+        if(tokens.size() != 2)
+            return;
+        if(tokens[1] == "ok")
+        {
+            lastServerReport = millis();
+        }
+    }
 
     // if the request is isthere
     if(tokens[0] == "isthere")
