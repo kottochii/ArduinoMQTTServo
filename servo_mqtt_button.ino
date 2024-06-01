@@ -77,9 +77,12 @@ int lastServerReport = millis();
 void setup() {
     //Initialize serial and wait for port to open:
     Serial.begin(9600);
+    /*
+    // should not expect connections to the Arduino
     while (!Serial) {
         ; // wait for serial port to connect. Needed for native USB port only
     }
+    */
 
     // init the "PROBLEM" LED
     pinMode(LED_BUILTIN, OUTPUT);
@@ -89,46 +92,60 @@ void setup() {
     // attempt to connect to WiFi network:
     Serial.print("Attempting to connect to WPA SSID: ");
     Serial.println(ssid);
-    while (WiFi.begin(ssid, pass) != WL_CONNECTED) {
+    uint cnxn_attempts = 0;
+    int connection_result = 0;
+    while (((connection_result = WiFi.begin(ssid, pass)) != WL_CONNECTED) && (cnxn_attempts < 10)) {
         // failed, retry
         Serial.print(".");
         delay(1000);
+        cnxn_attempts++;
     }
 
-    Serial.println("You're connected to the network");
-    Serial.println();
+    if(connection_result == WL_CONNECTED)
+    {
+        Serial.println("You're connected to the network");
+        Serial.println();
 
-    #ifdef MQTT_CLIENT_ID
-    mqttClient.setId(MQTT_CLIENT_ID);
-    #else
-    mqttClient.setId("motor_" MOTOR_ID);
-    #endif
+        #ifdef MQTT_CLIENT_ID
+        mqttClient.setId(MQTT_CLIENT_ID);
+        #else
+        mqttClient.setId("motor_" MOTOR_ID);
+        #endif
 
-    #if defined( MQTT_USERNAME) && defined (MQTT_PASSWORD)
-    mqttClient.setUsernamePassword(MQTT_USERNAME, MQTT_PASSWORD);
-    #endif
+        #if defined( MQTT_USERNAME) && defined (MQTT_PASSWORD)
+        mqttClient.setUsernamePassword(MQTT_USERNAME, MQTT_PASSWORD);
+        #endif
 
-    Serial.print("Attempting to connect to the MQTT broker: ");
-    Serial.println(broker);
+        Serial.print("Attempting to connect to the MQTT broker: ");
+        Serial.println(broker);
 
-    if (!mqttClient.connect(broker, port)) {
-        Serial.print("MQTT connection failed! Error code = ");
-        Serial.println(mqttClient.connectError());
+        if (!mqttClient.connect(broker, port)) {
+            Serial.print("MQTT connection failed! Error code = ");
+            Serial.println(mqttClient.connectError());
 
-        while (1);
+        }
+        else
+        {
+            // set the message receive callback
+            mqttClient.onMessage(onMqttMessage);
+            // subscribe to a topic
+            mqttClient.subscribe(topic);
+
+            Serial.print("Connected, waiting for messages");
+        }
     }
-
-    // set the message receive callback
-    mqttClient.onMessage(onMqttMessage);
-    // subscribe to a topic
-    mqttClient.subscribe(topic);
-
-    Serial.print("Connected, waiting for messages");
-
+    else
+    {
+        Serial.println("Wifi connection failed.");
+        Serial.println("You can restart the controller to try again or continue without the connection.");
+        Serial.println("Only physical button will be enabled then.");
+    }
     // set up the servo and the button
     main_servo.attach(SERVO_PIN);           // attaches the servo on pin 9 to the servo object
     #ifdef STARTPOINT
-    main_servo.write(STARTPOINT);           // start with 0 degrees
+    main_servo.write(STARTPOINT);           // start with given value
+    #else
+    main_servo.write(0);                    // start with 0 degrees
     #endif
     // init button
     pinMode(BUTTON_PIN, INPUT_PULLUP);
@@ -142,15 +159,12 @@ void loop() {
     // if the server's disconnected, turn the light on to indicate the problem
     if (!wifiClient.connected()) {
         digitalWrite(LED_BUILTIN, HIGH);
-        return;
     }
-
-    if(currentTime - lastServerReport > 10000)
+    else if(currentTime - lastServerReport > 10000)
     {
         digitalWrite(LED_BUILTIN, HIGH);
-        return;
     }
-    digitalWrite(LED_BUILTIN, LOW);
+    else digitalWrite(LED_BUILTIN, LOW);
 
     // every 10 seconds report state
     if(currentTime - previousTime > 500)
@@ -158,8 +172,9 @@ void loop() {
         previousTime = currentTime;
         sendMqttMessage(get_current_state());
     }
-    // poll messages always
-    mqttClient.poll();
+    // poll messages only if wifi is active
+    if (wifiClient.connected())
+        mqttClient.poll();
 
 
     // first of all check the button state
@@ -298,10 +313,12 @@ void onMqttMessage(int messageSize) {
     // the server should let know that it is up at least once in 10 seconds
     if(tokens[0] == "server")
     {
+        Serial.println("SERVER MSG");
         if(tokens.size() != 2)
             return;
         if(tokens[1] == "ok")
         {
+            Serial.println("SERVER OK");
             lastServerReport = millis();
         }
     }
